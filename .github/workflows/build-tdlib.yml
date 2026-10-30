@@ -1,0 +1,35 @@
+name: Build Specific TDLib Version for Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      tdlib_version:
+        description: 'TDLib Version / Tag / Commit SHA (e.g., v1.8.23)'
+        required: true
+        default: 'master' # ברירת המחדל תהיה הגרסה הכי עדכנית
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. משיכת קוד המקור של הגרסה הספציפית שנבחרה
+      - name: Checkout TDLib Repository
+        uses: actions/checkout@v4
+        with:
+          repository: tdlib/td
+          ref: ${{ github.event.inputs.tdlib_version }} # הגרסה שהמשתמש הקליד
+          fetch-depth: 1
+
+      # 2. קימפול באמצעות ה-Dockerfile הרשמי של TDLib המיועד לאנדרואיד
+      - name: Build TDLib JSON for Android via Docker
+        run: |
+          cd example/android
+          docker build --build-arg TDLIB_INTERFACE=JSON --output tdlib_output .
+
+      # 3. שמירת הקבצים המקומפלים והעלאתם כ-Artifact של הריצה
+      - name: Upload Compiled TDLib Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tdlib-android-${{ github.event.inputs.tdlib_version }}
+          path: example/android/tdlib_output/

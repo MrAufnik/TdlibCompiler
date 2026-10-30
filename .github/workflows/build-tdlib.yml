@@ -1,4 +1,4 @@
-name: Build Specific TDLib Version for Android
+name: Build TDLib and Java Files for Android
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
       tdlib_version:
         description: 'TDLib Version / Tag / Commit SHA (e.g., v1.8.23)'
         required: true
-        default: 'master' # ברירת המחדל תהיה הגרסה הכי עדכנית
+        default: 'master'
 
 jobs:
   build-android:
@@ -18,18 +18,36 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: tdlib/td
-          ref: ${{ github.event.inputs.tdlib_version }} # הגרסה שהמשתמש הקליד
+          ref: ${{ github.event.inputs.tdlib_version }}
           fetch-depth: 1
 
-      # 2. קימפול באמצעות ה-Dockerfile הרשמי של TDLib המיועד לאנדרואיד
-      - name: Build TDLib JSON for Android via Docker
+      # 2. בניית ה-Docker Image (בשלב זה ה-Image מכיל את כל קבצי ה-Java וה-.so המקומפלים)
+      - name: Build TDLib Docker Image
         run: |
           cd example/android
-          docker build --build-arg TDLIB_INTERFACE=JSON --output tdlib_output .
+          docker build --build-arg TDLIB_INTERFACE=JSON -t tdlib-android-builder .
 
-      # 3. שמירת הקבצים המקומפלים והעלאתם כ-Artifact של הריצה
-      - name: Upload Compiled TDLib Artifacts
+      # 3. יצירת קונטיינר זמני וחילוץ קבצי ה-Java וקבצי ה-.so מתוכו
+      - name: Extract Compiled .so and Java Files
+        run: |
+          # יצירת תיקיית פלט מקומית
+          mkdir -p output/so_files output/java_files
+          
+          # יצירת קונטיינר זמני (מבלי להריץ אותו)
+          CONTAINER_ID=$(docker create tdlib-android-builder)
+          
+          # 1. העתקת קובץ ה-ZIP שמכיל את קבצי ה-.so (ונמצא בתיקיית ה-home של ה-Docker)
+          docker cp $CONTAINER_ID:/root/tdlib.zip output/so_files/
+          
+          # 2. העתקת קבצי ה-Java (הנמצאים בתוך קוד המקור של ה-Container)
+          docker cp $CONTAINER_ID:/td/example/android/src/main/java/org output/java_files/
+          
+          # מחיקת הקונטיינר הזמני
+          docker rm $CONTAINER_ID
+
+      # 4. שמירת כל הקבצים כ-Artifact אחד מסודר
+      - name: Upload All Artifacts (SO and Java)
         uses: actions/upload-artifact@v4
         with:
-          name: tdlib-android-${{ github.event.inputs.tdlib_version }}
-          path: example/android/tdlib_output/
+          name: tdlib-android-full-${{ github.event.inputs.tdlib_version }}
+          path: output/

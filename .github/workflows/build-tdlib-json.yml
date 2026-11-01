@@ -1,19 +1,21 @@
+
 name: Build TDLib and Java Files for Android JSON Version (Release)
 
 on:
   workflow_dispatch:
     inputs:
       tdlib_version:
-        description: 'TDLib Version / Tag / Commit SHA (e.g., v1.8.23)'
+        description: 'TDLib Version / Tag / Commit SHA'
         required: true
         default: 'master'
 
 jobs:
-  build-android:
+  build-android-json:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. משיכת קוד המקור של הגרסה הספציפית שנבחרה
+
+      # 1. Checkout selected TDLib version
       - name: Checkout TDLib Repository
         uses: actions/checkout@v4
         with:
@@ -21,48 +23,186 @@ jobs:
           ref: ${{ github.event.inputs.tdlib_version }}
           fetch-depth: 1
 
-      # 2. הגדרת זיכרון Swap ללא שימוש בפקודות חבילות שגורמות לתקיעה באובונטו החדש
+      # 2. Setup compiler swap
       - name: Setup Compiler Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 12
+
+      # 3. Verify system resources
+      - name: Verify Memory Configuration
         run: |
-          sudo fallocate -l 10G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          echo "=== Memory and Swap Status ==="
-          free -m
+          echo "=== Memory ==="
+          free -h
+
+          echo "=== Disk ==="
           df -h
 
-      # 3. בניית ה-Docker Image עם הגדרת גרסת Release נקייה מסמלי Debug
-      - name: Build TDLib Docker Image (Release Mode)
+      # 4. Build TDLib JSON Release
+      - name: Build TDLib Android JSON Release
+        shell: bash
+        env:
+          TDLIB_VERSION: ${{ github.event.inputs.tdlib_version }}
         run: |
+          set -euo pipefail
+
           cd example/android
-          # הוספנו את הארגומנט BUILD_TYPE=Release כדי לקבל קבצי .so קטנים ומהירים וללא גרסת דיבאג
-          docker build \
+
+          mkdir -p ../../tdlib_raw_output
+
+          echo "=== TDLib JSON Release Build ==="
+          echo "Version: $TDLIB_VERSION"
+          echo "Interface: JSON"
+          echo "Build: Release"
+
+          DOCKER_BUILDKIT=1 docker build \
+            --build-arg "COMMIT_HASH=$TDLIB_VERSION" \
             --build-arg TDLIB_INTERFACE=JSON \
             --build-arg BUILD_TYPE=Release \
-            -t tdlib-android-builder .
+            --output ../../tdlib_raw_output .
 
-      # 4. יצירת קונטיינר זמני וחילוץ קבצי ה-Java וקבצי ה-.so מתוכו
-      - name: Extract Compiled .so and Java Files
+          cd ../..
+
+          echo "=== Build Output ==="
+          ls -lah tdlib_raw_output/
+
+          if [ ! -s tdlib_raw_output/tdlib.zip ]; then
+            echo "::error::tdlib.zip was not generated!"
+            exit 1
+          fi
+
+      # 5. Extract and structure JSON native libraries
+      - name: Extract and Validate JSON Libraries
+        shell: bash
         run: |
-          # יצירת תיקיית פלט מקומית
-          mkdir -p output/so_files output/java_files
-          
-          # יצירת קונטיינר זמני (מבלי להריץ אותו)
-          CONTAINER_ID=$(docker create tdlib-android-builder)
-          
-          # 1. העתקת קובץ ה-ZIP שמכיל את קבצי ה-.so של ה-Release
-          docker cp $CONTAINER_ID:/root/tdlib.zip output/so_files/
-          
-          # 2. העתקת קבצי ה-Java מתוך קוד המקור של ה-Container
-          docker cp $CONTAINER_ID:/td/example/android/src/main/java/org output/java_files/
-          
-          # מחיקת הקונטיינר הזמני
-          docker rm $CONTAINER_ID
+          set -euo pipefail
 
-      # 5. שמירת כל הקבצים כ-Artifact אחד מסודר
-      - name: Upload All Artifacts (SO and Java)
+          mkdir -p output/so_files
+          mkdir -p output/extracted
+          mkdir -p output/abi_libraries
+
+          # ---------------------------------------
+          # A. Copy original Release archive
+          # ---------------------------------------
+
+          cp tdlib_raw_output/tdlib.zip \
+             output/so_files/tdlib.zip
+
+          # ---------------------------------------
+          # B. Extract archive
+          # ---------------------------------------
+
+          unzip -q tdlib_raw_output/tdlib.zip \
+            -d output/extracted
+
+          echo "=== Archive Contents ==="
+          find output/extracted -type f | head -100
+
+          # ---------------------------------------
+          # C. Locate JSON native libraries
+          # ---------------------------------------
+
+          mapfile -t JSON_LIBS < <(
+            find output/extracted \
+              -type f \
+              -name 'libtdjson.so' \
+              | sort
+          )
+
+          if [ "${#JSON_LIBS[@]}" -eq 0 ]; then
+            echo "::error::libtdjson.so not found!"
+
+            echo "=== Available Native Libraries ==="
+            find output/extracted \
+              -type f \
+              -name '*.so'
+
+            exit 1
+          fi
+
+          echo "Found ${#JSON_LIBS[@]} JSON libraries"
+
+          # ---------------------------------------
+          # D. Organize libraries by ABI
+          # ---------------------------------------
+
+          for LIB in "${JSON_LIBS[@]}"; do
+
+            ABI=""
+
+            for CANDIDATE in \
+              arm64-v8a \
+              armeabi-v7a \
+              x86_64 \
+              x86; do
+
+              if [[ "$LIB" == *"/$CANDIDATE/"* ]]; then
+                ABI="$CANDIDATE"
+                break
+              fi
+
+            done
+
+            if [ -z "$ABI" ]; then
+              echo "::error::Could not identify ABI for $LIB"
+              exit 1
+            fi
+
+            mkdir -p "output/abi_libraries/$ABI"
+
+            cp "$LIB" \
+              "output/abi_libraries/$ABI/libtdjson.so"
+
+            echo "Verified: $ABI"
+          done
+
+          # ---------------------------------------
+          # E. Validate all extracted libraries
+          # ---------------------------------------
+
+          echo "=== JSON ABI Libraries ==="
+
+          find output/abi_libraries \
+            -type f \
+            -name '*.so' \
+            -exec ls -lh {} \;
+
+          # ---------------------------------------
+          # F. Verify archive integrity
+          # ---------------------------------------
+
+          unzip -t output/so_files/tdlib.zip
+
+          # ---------------------------------------
+          # G. Save version information
+          # ---------------------------------------
+
+          echo "${{ github.event.inputs.tdlib_version }}" \
+            > output/tdlib_version.txt
+
+          echo "JSON" > output/interface.txt
+          echo "Release" > output/build_type.txt
+
+          # ---------------------------------------
+          # H. Final output
+          # ---------------------------------------
+
+          echo "=== Final Artifact Structure ==="
+
+          find output -maxdepth 5 -type f | sort
+
+          echo "TDLib JSON Release prepared successfully!"
+
+      # 6. Upload artifacts
+      - name: Upload TDLib Android JSON Release
         uses: actions/upload-artifact@v4
         with:
           name: tdlib-android-json-release-${{ github.event.inputs.tdlib_version }}
-          path: output/
+          path: |
+            output/so_files/
+            output/abi_libraries/
+            output/tdlib_version.txt
+            output/interface.txt
+            output/build_type.txt
+          if-no-files-found: error
+          retention-days: 30

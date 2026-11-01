@@ -1,4 +1,4 @@
-name: Build TDLib and Java Files for Android
+name: Build TDLib and Java Files for Android JSON Version (Release)
 
 on:
   workflow_dispatch:
@@ -21,13 +21,27 @@ jobs:
           ref: ${{ github.event.inputs.tdlib_version }}
           fetch-depth: 1
 
-      # 2. בניית ה-Docker Image (בשלב זה ה-Image מכיל את כל קבצי ה-Java וה-.so המקומפלים)
-      - name: Build TDLib Docker Image
+      # 2. פינוי שטח דיסק והגדרת Swap כדי למנוע קריסה מחוסר זיכרון (OOM) בקימפול
+      - name: Free Disk Space and Setup Swap
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          df -h
+
+      # 3. בניית ה-Docker Image עם הגדרת גרסת Release נקייה מסמלי Debug
+      - name: Build TDLib Docker Image (Release Mode)
         run: |
           cd example/android
-          docker build --build-arg TDLIB_INTERFACE=JSON -t tdlib-android-builder .
+          # הוספנו את הארגומנט BUILD_TYPE=Release כדי לקבל קבצי .so קטנים ומהירים וללא גרסת דיבאג
+          docker build \
+            --build-arg TDLIB_INTERFACE=JSON \
+            --build-arg BUILD_TYPE=Release \
+            -t tdlib-android-builder .
 
-      # 3. יצירת קונטיינר זמני וחילוץ קבצי ה-Java וקבצי ה-.so מתוכו
+      # 4. יצירת קונטיינר זמני וחילוץ קבצי ה-Java וקבצי ה-.so מתוכו
       - name: Extract Compiled .so and Java Files
         run: |
           # יצירת תיקיית פלט מקומית
@@ -36,18 +50,18 @@ jobs:
           # יצירת קונטיינר זמני (מבלי להריץ אותו)
           CONTAINER_ID=$(docker create tdlib-android-builder)
           
-          # 1. העתקת קובץ ה-ZIP שמכיל את קבצי ה-.so (ונמצא בתיקיית ה-home של ה-Docker)
+          # 1. העתקת קובץ ה-ZIP שמכיל את קבצי ה-.so של ה-Release
           docker cp $CONTAINER_ID:/root/tdlib.zip output/so_files/
           
-          # 2. העתקת קבצי ה-Java (הנמצאים בתוך קוד המקור של ה-Container)
+          # 2. העתקת קבצי ה-Java מתוך קוד המקור של ה-Container
           docker cp $CONTAINER_ID:/td/example/android/src/main/java/org output/java_files/
           
           # מחיקת הקונטיינר הזמני
           docker rm $CONTAINER_ID
 
-      # 4. שמירת כל הקבצים כ-Artifact אחד מסודר
+      # 5. שמירת כל הקבצים כ-Artifact אחד מסודר
       - name: Upload All Artifacts (SO and Java)
         uses: actions/upload-artifact@v4
         with:
-          name: tdlib-android-full-${{ github.event.inputs.tdlib_version }}
+          name: tdlib-android-json-release-${{ github.event.inputs.tdlib_version }}
           path: output/

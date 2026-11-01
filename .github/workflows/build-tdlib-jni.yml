@@ -1,4 +1,4 @@
-name: Build TDLib JNI and Java Files for Android JNI Version(Release Mode)
+name: Build TDLib JNI and Java Files for Android JNI Version (Release Mode)
 
 on:
   workflow_dispatch:
@@ -21,22 +21,32 @@ jobs:
           ref: ${{ github.event.inputs.tdlib_version }}
           fetch-depth: 1
 
-      # 2. Allocate essential virtual memory (Swap) to prevent compiler Out-Of-Memory (OOM) failures
-      - name: Free Disk Space and Setup Swap
+      # 2. Safe virtual memory allocation & system cleanup to prevent Ubuntu 26.04 OS lockup
+      - name: Safe Free Disk Space and Setup Swap
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift
+          echo "=== Freeing up space safely ==="
+          sudo apt-get clean
+          # Remove heavy pre-installed software via package manager instead of breaking system directories
+          sudo apt-get remove --purge -y azure-cli google-cloud-sdk microsoft-edge-stable google-chrome-stable firefox monotone || true
+          sudo apt-get autoremove -y
+          
+          echo "=== Allocating 8GB Swap File ==="
+          sudo swapoff -a || true
           sudo fallocate -l 8G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
+          
+          echo "=== Current Storage Layout ==="
           df -h
+          free -m
 
-      # 3. Trigger Docker Build optimized for high-performance Release binaries
+      # 3. Trigger Docker Build optimized for high-performance Release JNI binaries
       - name: Build Release TDLib Android JNI via Docker BuildKit
         run: |
           cd example/android
           mkdir -p ../../tdlib_raw_output
-          # Added BUILD_TYPE=Release to strip debug lines and optimize binary performance
+          # Invokes default native JNI compilation and optimizes binary sizes via Release mode
           DOCKER_BUILDKIT=1 docker build \
             --build-arg COMMIT_HASH=${{ github.event.inputs.tdlib_version }} \
             --build-arg BUILD_TYPE=Release \

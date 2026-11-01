@@ -21,25 +21,16 @@ jobs:
           ref: ${{ github.event.inputs.tdlib_version }}
           fetch-depth: 1
 
-      # 2. Safe virtual memory allocation & system cleanup to prevent Ubuntu 26.04 OS lockup
-      - name: Safe Free Disk Space and Setup Swap
+      # 2. Safe virtual memory allocation to prevent compiler memory crashes without freezing on Ubuntu 26.04
+      - name: Setup Compiler Swap Space
         run: |
-          echo "=== Freeing up space safely ==="
-          sudo apt-get clean
-          # Remove heavy pre-installed software via package manager instead of breaking system directories
-          sudo apt-get remove --purge -y azure-cli google-cloud-sdk microsoft-edge-stable google-chrome-stable firefox monotone || true
-          sudo apt-get autoremove -y
-          
-          echo "=== Allocating 8GB Swap File ==="
-          sudo swapoff -a || true
-          sudo fallocate -l 8G /swapfile
+          sudo fallocate -l 10G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          
-          echo "=== Current Storage Layout ==="
-          df -h
+          echo "=== Memory and Swap Status ==="
           free -m
+          df -h
 
       # 3. Trigger Docker Build optimized for high-performance Release JNI binaries
       - name: Build Release TDLib Android JNI via Docker BuildKit

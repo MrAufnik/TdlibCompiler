@@ -1,4 +1,4 @@
-name: Build TDLib JNI and Java Files for Android JNI VERSION(Release Mode)
+name: Build TDLib JNI and Java Files for Android JNI Version(Release Mode)
 
 on:
   workflow_dispatch:

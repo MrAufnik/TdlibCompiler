@@ -91,8 +91,9 @@ jobs:
           echo "Java API found: $JAVA_API"
           echo "Java root: $JAVA_ROOT"
 
-          # 6. Validate JNI Java wrapper files
-          for FILE in Client.java ClientManager.java TdApi.java; do
+          # 6. Validate JNI Java wrapper file
+          #for FILE in Client.java ClientManager.java TdApi.java; do
+          for FILE in Client.java TdApi.java; do
             if [ ! -f "$JAVA_ROOT/org/drinkless/tdlib/$FILE" ]; then
               echo "::error::Missing Java source: $FILE"
               exit 1

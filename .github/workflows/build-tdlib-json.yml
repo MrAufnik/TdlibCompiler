@@ -31,24 +31,33 @@ jobs:
             --build-arg BUILD_TYPE=Release \
             --output ../../tdlib_raw_output .
 
-      # 3. Structure, sort, and isolate the outputs safely
+      # 3. Unpack tdlib.zip and collect libs (+ Java sources if the zip has them)
       - name: Structure and Verify Artifacts
+        shell: bash
         run: |
-          set -e
-          mkdir -p output/so_files output/java_files
-          
-          # Safely copy the optimized production release binary
+          set -euo pipefail
+          mkdir -p output/so_files output/java_files tdlib_extracted
+
+          echo "=== Docker output ==="
+          ls -lah tdlib_raw_output/
+          [ -f tdlib_raw_output/tdlib.zip ] || { echo "::error::tdlib.zip not found"; exit 1; }
+
           cp tdlib_raw_output/tdlib.zip output/so_files/
-          
-          # Match and extract Java sources safely across execution fallback directories
-          if [ -d tdlib_raw_output/java/org ]; then
-            cp -r tdlib_raw_output/java/org output/java_files/
-          elif [ -d tdlib_raw_output/org ]; then
-            cp -r tdlib_raw_output/org output/java_files/
+          unzip -q tdlib_raw_output/tdlib.zip -d tdlib_extracted
+          find tdlib_extracted -maxdepth 4 | head -60
+
+          # JSON build must ship libtdjson.so; Java sources are optional here
+          find tdlib_extracted -name 'libtdjson.so' | grep -q . || { echo "::error::libtdjson.so missing"; exit 1; }
+
+          JAVA_API=$(find tdlib_extracted -type f -path '*/org/drinkless/tdlib/TdApi.java' -print -quit)
+          if [ -n "$JAVA_API" ]; then
+            cp -r "${JAVA_API%/org/drinkless/tdlib/TdApi.java}/org" output/java_files/
           else
-            echo "Using base checkout directory matching trees."
-            cp -r src/main/java/org output/java_files/ || cp -r example/android/src/main/java/org output/java_files/
+            echo "No Java sources in JSON build (expected)."
+            rmdir output/java_files
           fi
+
+          ls -R output/ | head -60
 
       # 4. Save and generate clean downloadeable ZIP bundles
       - name: Upload All Artifacts (SO and Java)

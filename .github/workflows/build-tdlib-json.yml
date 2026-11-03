@@ -13,12 +13,40 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 0. Turn "1.8.64" / "v1.8.64" into a real commit (TDLib has no tags after v1.8.0)
+      - name: Resolve TDLib Ref
+        id: resolve
+        shell: bash
+        env:
+          INPUT_REF: ${{ github.event.inputs.tdlib_version }}
+        run: |
+          set -euo pipefail
+          REF="$INPUT_REF"
+          VER="${REF#v}"
+          if [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if git ls-remote --exit-code --tags https://github.com/tdlib/td "refs/tags/v$VER" >/dev/null 2>&1; then
+              REF="v$VER"
+              echo "Using real tag $REF"
+            else
+              git clone -q --filter=blob:none --no-checkout https://github.com/tdlib/td td_probe
+              PATTERN="^Update version to ${VER//./\\.}\\.$"
+              REF=$(git -C td_probe log origin/master --format=%H -E --grep="$PATTERN" | head -n 1)
+              if [ -z "$REF" ]; then
+                echo "::error::No 'Update version to $VER.' commit found in tdlib/td"
+                exit 1
+              fi
+              echo "Resolved version $VER -> commit $REF"
+              rm -rf td_probe
+            fi
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
       # 1. Clone the specified TDLib version repository
       - name: Checkout TDLib Repository
         uses: actions/checkout@v4
         with:
           repository: tdlib/td
-          ref: ${{ github.event.inputs.tdlib_version }}
+          ref: ${{ steps.resolve.outputs.ref }}
           fetch-depth: 1
 
       # 2. Build Release JSON libraries via Docker BuildKit
@@ -28,6 +56,7 @@ jobs:
           mkdir -p ../../tdlib_raw_output
           DOCKER_BUILDKIT=1 docker build \
             --build-arg TDLIB_INTERFACE=JSON \
+            --build-arg COMMIT_HASH=${{ steps.resolve.outputs.ref }} \
             --build-arg BUILD_TYPE=Release \
             --output ../../tdlib_raw_output .
 
